@@ -25,3 +25,7 @@ Pinned `aiosendspin==9.1.1` to match the older Noise handshake used by Music Ass
 ### v0.3.3
 
 Use `pairing_v9.json` for the aiosendspin 9.x pairing store, preserving the incompatible 10.x `pairing.json` and persistent `identity.key`.
+
+### v0.3.4 — Pairing PSK setup
+
+On first start the app generates a cryptographically random per-device Sendspin Pairing PSK using `aiosendspin 9.1.1`, saves it in the persistent `pairing_v9.json` store, and logs a version-0 `SP:0...` token. Paste that token into the Music Assistant pairing prompt. It will remain the same on restart and update, provided `/data` is preserved. Do not post this token publicly: it is a persistent credential that can authorize a server to pair with your analyzer. The existing device identity is reused. This corrects the absence of PSK provisioning in v0.3.3. Live Music Assistant pairing has not yet been tested.

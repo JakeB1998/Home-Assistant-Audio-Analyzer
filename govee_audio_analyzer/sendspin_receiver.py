@@ -93,12 +93,28 @@ async def run_once(server, sink, state_dir):
     from aiosendspin.client import SendspinClient
     from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
     from aiosendspin.models.types import AudioCodec, Roles
-    from aiosendspin.noise.trust_store import FileClientPairingStore
+    from aiosendspin.noise.trust_store import FileClientPairingStore, PairingPsk
+    from aiosendspin.noise.keys import generate_psk, psk_id_for
+    from aiosendspin.noise.pairing_token import PSKPairingToken, encode_token
 
     identity = load_identity(f"{state_dir}/identity.key")
     # v10 pairing stores cannot be parsed by the v9 SDK. Keep the old
     # pairing.json intact; use a separate persistent v9 store instead.
     store = await FileClientPairingStore.open(f"{state_dir}/pairing_v9.json")
+    pairing_psk = await store.pairing_psk()
+    if pairing_psk is None:
+        # Generate exactly once and persist through the SDK's pairing store.
+        secret = generate_psk()
+        pairing_psk = PairingPsk(psk_id=psk_id_for(secret), psk=secret)
+        await store.set_pairing_psk(pairing_psk)
+        LOG.info("Created and saved a new per-device Sendspin Pairing PSK")
+    pairing_token = encode_token(
+        PSKPairingToken(client_id=identity.peer_id, pairing_psk=pairing_psk.psk)
+    )
+    # The token is a long-lived credential. It is shown intentionally to the
+    # operator in the private app logs; do not upload logs to public sites.
+    LOG.warning("SENDSPIN PAIRING TOKEN (SECRET): %s", pairing_token)
+    LOG.warning("Paste this token into the Music Assistant pairing dialog; keep it private")
     support = ClientHelloPlayerSupport(
         supported_formats=[SupportedAudioFormat(codec=AudioCodec.PCM, channels=1, sample_rate=RATE, bit_depth=16)],
         buffer_capacity=2_000_000,

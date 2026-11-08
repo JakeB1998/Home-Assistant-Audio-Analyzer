@@ -1,5 +1,5 @@
 name: Govee Sendspin Audio Analyzer
-version: 0.3.3
+version: 0.3.4
 slug: govee_audio_analyzer
 description: "Live Sendspin PCM analysis and MQTT sensors"
 url: https://www.music-assistant.io/player-support/sendspin/
