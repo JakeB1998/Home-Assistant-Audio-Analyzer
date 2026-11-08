@@ -1,0 +1,23 @@
+name: Govee Sendspin Audio Analyzer
+version: 0.3.0
+slug: govee_audio_analyzer
+description: "Live Sendspin PCM analysis and MQTT sensors"
+url: https://www.music-assistant.io/player-support/sendspin/
+init: false
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+options:
+  sendspin_server: "ws://homeassistant.local:8927/sendspin"
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
+schema:
+  sendspin_server: str
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_user: str
+  mqtt_password: password
