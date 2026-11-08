@@ -1,6 +1,6 @@
 """Music Assistant Sendspin -> PCM FFT analyzer -> MQTT.
 
-Uses the *public* aiosendspin 10.2.1 client API. Advertises only 22050 Hz,
+Uses the *public* aiosendspin 9.1.1 client API. Advertises only 22050 Hz,
 mono, 16-bit PCM so no codec or resampling step is required. No audio is saved.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ class PcmSink:
         self.active = False
         LOG.info("Sendspin stream ended")
 
-    def audio(self, timestamp_us, data, audio_format, send_ahead):
+    def audio(self, timestamp_us, data, audio_format):
         # Callback runs on the event loop: avoid any IO, disk, or blocking code.
         pcm = audio_format.pcm_format
         if str(getattr(audio_format.codec, "value", audio_format.codec)) != "pcm":
@@ -110,7 +110,6 @@ async def run_once(server, sink, state_dir):
         player_support=support,
     )
     # Safe here: the client only *receives* player audio, no microphone/source role.
-    await client.set_unpaired_access(enabled=True)
     disconnected = asyncio.Event()
     client.add_disconnect_listener(lambda: disconnected.set())
     client.add_stream_start_listener(sink.start)
