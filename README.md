@@ -21,3 +21,7 @@ This repository contains a community Home Assistant app that receives Sendspin a
 ## 0.3.2 compatibility fix
 
 Pinned `aiosendspin==9.1.1` to match the older Noise handshake used by Music Assistant 2.10.x and adjusted the three-argument audio callback. This specifically targets the `psk_category` missing-field error from the previous 0.3.1 build. It is not yet validated against the user's live Music Assistant server. If the server uses a newer protocol version, verify the Music Assistant version before choosing a different SDK.
+
+### v0.3.3
+
+Use `pairing_v9.json` for the aiosendspin 9.x pairing store, preserving the incompatible 10.x `pairing.json` and persistent `identity.key`.

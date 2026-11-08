@@ -96,7 +96,9 @@ async def run_once(server, sink, state_dir):
     from aiosendspin.noise.trust_store import FileClientPairingStore
 
     identity = load_identity(f"{state_dir}/identity.key")
-    store = await FileClientPairingStore.open(f"{state_dir}/pairing.json")
+    # v10 pairing stores cannot be parsed by the v9 SDK. Keep the old
+    # pairing.json intact; use a separate persistent v9 store instead.
+    store = await FileClientPairingStore.open(f"{state_dir}/pairing_v9.json")
     support = ClientHelloPlayerSupport(
         supported_formats=[SupportedAudioFormat(codec=AudioCodec.PCM, channels=1, sample_rate=RATE, bit_depth=16)],
         buffer_capacity=2_000_000,
