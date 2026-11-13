@@ -333,6 +333,18 @@ class KickEventPublisher:
         self.previous_candidate = False
         self.event_count = 0
 
+    def publish_event(self, mqtt_client, strength):
+        """Publish one already-confirmed fast kick. No rising-edge gate here."""
+        if mqtt_client is None:
+            return False
+        self.event_count += 1
+        event = {
+            "event": "kick", "count": self.event_count,
+            "strength": round(float(strength), 3), "timestamp": time.time(),
+        }
+        mqtt_client.publish(KICK_EVENT_TOPIC, json.dumps(event), qos=0, retain=False)
+        return True
+
     def process(self, metrics, mqtt_client):
         candidate = metrics.get("kick_candidate") is True
         is_new = candidate and not self.previous_candidate

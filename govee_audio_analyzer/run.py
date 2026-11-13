@@ -11,6 +11,8 @@ for key, value in {
     'MQTT_USER': opts['mqtt_user'],
     'MQTT_PASSWORD': opts['mqtt_password'],
     'STATE_DIR': '/data',
+    'LOG_LEVEL': opts.get('log_level', 'DEBUG'),
+    'KICK_SENSITIVITY': opts.get('kick_sensitivity', 0.55),
 }.items():
     os.environ[key] = str(value)
 os.execv('/opt/venv/bin/python', ['/opt/venv/bin/python', '-u', '/opt/analyzer/sendspin_receiver.py'])

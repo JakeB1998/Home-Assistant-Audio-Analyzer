@@ -59,3 +59,9 @@ No external Sendspin or MQTT server is required for the tests. They do **not** p
 For each newly detected `kick_candidate`, publish JSON to the non-retained
 MQTT topic `reactive_lights/events/kick` with event, count, strength, and
 timestamp. The regular `govee_audio/state` messages and discovery are unchanged.
+
+## v0.4.2 kick events and diagnostic logging
+
+Fast kick detector analyzes PCM every ~25 ms (75 ms minimum between accepted kicks), separately from original 100-ms audio metrics. Sends JSON to `reactive_lights/events/kick`: `event`, `count`, `strength`, `timestamp`. MQTT events are non-retained. It does not alter the `govee_audio/state` legacy kick metrics.
+
+Configure `log_level: DEBUG` for per-kick logs and 10-second health checks. Each 60 seconds of active Sendspin streaming logs a long INFO report with fast kick count, other percussive/onset/buildup/drop counts and audio statistics. Logs also summarize each stream at the end. `kick_sensitivity` is between `0.0` and `1.0`, default `0.55`; restart add-on after change.

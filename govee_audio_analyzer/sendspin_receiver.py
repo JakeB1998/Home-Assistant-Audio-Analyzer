@@ -15,18 +15,24 @@ from pathlib import Path
 import numpy as np
 
 from analyzer import Analyzer, HOP, KickEventPublisher, connect_mqtt, TOPIC, AVAIL
+from fast_kick import FastKickDetector, FAST_HOP
+from playback_stats import PlaybackStats
 
 LOG = logging.getLogger("govee-sendspin")
 RATE = 22050
 
 
 class PcmSink:
-    """Accumulate PCM chunks and calculate features in 100-ms hops."""
+    """Analyze music at 100 ms; detect kick attacks at ~25 ms."""
 
     def __init__(self, mqtt_client=None):
         self.mqtt_client = mqtt_client
         self.analyzer = Analyzer()
         self.kick_events = KickEventPublisher()
+        self.fast_kick = FastKickDetector()
+        self.stats = PlaybackStats()
+        self.last_kick_diagnostic = time.monotonic()
+        self.fast_buffer = bytearray()
         self.buffer = bytearray()
         self.active = False
         self.last_audio = None
@@ -34,20 +40,32 @@ class PcmSink:
         self.last_debug = 0.0
 
     def start(self, msg):
+        if self.active:
+            self.stats.finish("replaced by new stream")
         self.buffer.clear()
+        self.fast_buffer.clear()
         self.analyzer = Analyzer()
+        self.fast_kick = FastKickDetector()
+        self.stats.reset()
+        self.last_kick_diagnostic = time.monotonic()
         self.kick_events.previous_candidate = False
         self.active = True
         LOG.info("Sendspin stream started: %s", msg)
 
     def clear(self, roles):
+        self.stats.finish("stream cleared")
         self.buffer.clear()
+        self.fast_buffer.clear()
         self.analyzer = Analyzer()
+        self.fast_kick = FastKickDetector()
         self.kick_events.previous_candidate = False
         LOG.info("Sendspin stream cleared")
 
     def stop(self, roles):
+        if self.active:
+            self.stats.finish("stream ended")
         self.buffer.clear()
+        self.fast_buffer.clear()
         self.active = False
         self.kick_events.previous_candidate = False
         LOG.info("Sendspin stream ended")
@@ -62,22 +80,50 @@ class PcmSink:
             LOG.error("Unexpected audio format %s; expected %s Hz mono s16le", pcm, RATE)
             return
         self.buffer.extend(data)
+        self.fast_buffer.extend(data)
+        # Fast kick path: only kick events use 25-ms analysis.
+        # Stats and the legacy MQTT state retain their 100-ms cadence.
+        while len(self.fast_buffer) >= FAST_HOP * 2:
+            raw = bytes(self.fast_buffer[:FAST_HOP * 2])
+            del self.fast_buffer[:FAST_HOP * 2]
+            sample_block = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+            detected = self.fast_kick.process(sample_block)
+            if detected:
+                self.stats.observe_kick(detected)
+                LOG.debug("KICK DETECTED strength=%.3f relative_attack=%.3f spectral_attack=%.5f bass_presence=%.3f threshold=%.5f time=%.3f",
+                          detected['strength'], detected['relative_attack'], detected['spectral_attack'],
+                          detected['bass_presence'], detected['threshold'], detected['t_audio'])
+                if self.mqtt_client is not None:
+                    if self.kick_events.publish_event(self.mqtt_client, detected['strength']):
+                        LOG.debug("KICK MQTT EVENT published topic=reactive_lights/events/kick count=%d",
+                                  self.kick_events.event_count)
         # Cap backlog if interrupted; always analyze recent samples.
         if len(self.buffer) > RATE * 2 * 2:
+            LOG.warning("PCM backlog exceeds 2s; dropping old audio")
             del self.buffer[:-HOP * 2]
+            self.fast_buffer.clear()
+            self.fast_kick = FastKickDetector()
         while len(self.buffer) >= HOP * 2:
             block = bytes(self.buffer[:HOP * 2])
             del self.buffer[:HOP * 2]
             samples = np.frombuffer(block, dtype="<i2").astype(np.float32) / 32768.0
             values = self.analyzer.process(samples)
             self.frames += 1
+            self.stats.observe_metrics(values)
             self.last_audio = time.monotonic()
             if self.mqtt_client is not None:
                 self.mqtt_client.publish(TOPIC, json.dumps(values), qos=0, retain=False)
-                if self.kick_events.process(values, self.mqtt_client):
-                    LOG.debug("Published kick event #%s", self.kick_events.event_count)
+                self.stats.mqtt_publish_attempts += 1
             else:
                 print(json.dumps(values), flush=True)
+            self.stats.maybe_log()
+            if time.monotonic() - self.last_kick_diagnostic >= 10:
+                self.last_kick_diagnostic = time.monotonic()
+                LOG.debug("KICK DETECTOR HEALTH accepted=%d candidates=%d refractory_rejects=%d threshold_reject_frames=%d sensitivity=%.2f max_strength=%.3f mqtt_published_total=%d",
+                          self.fast_kick.accepted, self.fast_kick.candidates,
+                          self.fast_kick.rejected_refractory, self.fast_kick.rejected_threshold,
+                          self.fast_kick.sensitivity, self.fast_kick.max_strength,
+                          self.kick_events.event_count)
             if time.monotonic() - self.last_debug > 10:
                 self.last_debug = time.monotonic()
                 LOG.info("Receiving audio: %s blocks; energy=%.3f, bass=%.3f", self.frames, values["energy"], values["bass"])
@@ -177,5 +223,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(main())
