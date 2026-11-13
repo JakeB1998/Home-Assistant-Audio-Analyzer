@@ -1,0 +1,435 @@
+alias: Govee Smart Music DJ - Upstairs TV
+description: >-
+  Reactive Lights v3. Adds 1-4 light reaction aggression profiles controlling
+  advanced metrics and cooldowns. Keeps DJ-owned colors and last-four WLED
+  history. Call periodically from the main DJ; fast reaction needs frequent calls.
+mode: single
+max_exceeded: silent
+fields:
+  player:
+    name: Music Player
+    selector:
+      entity:
+        domain: media_player
+  color_palette:
+    name: Song Palette
+    selector:
+      text: {}
+  music_genre:
+    name: Music Genre
+    selector:
+      text: {}
+  track_title:
+    name: Track Title
+    selector:
+      text: {}
+  track_artist:
+    name: Track Artist
+    selector:
+      text: {}
+  bpm_sync_enabled:
+    name: BPM Speed Sync
+    selector:
+      boolean: {}
+  light_reaction_aggression:
+    name: Light Reaction Aggression
+    description: "1 = calm/basic; 2 = moderate; 3 = responsive; 4 = maximum reaction"
+    required: false
+    default: 3
+    selector:
+      number:
+        min: 1
+        max: 4
+        step: 1
+        mode: slider
+  bpm_value:
+    name: BPM
+    selector:
+      number:
+        min: 0
+        max: 300
+        mode: box
+sequence:
+  - variables:
+      source_player: "{{ player | default('media_player.govee_audio_analyzer', true) }}"
+      music_select: select.tv_backlight_3_music_mode
+      wled_entity: light.wled_gledopto
+      wled_speed_entity: number.wled_gledopto_speed
+      wled_last_change: input_datetime.wled_gledopto_last_change
+      # New helper: create input_datetime.wled_gledopto_last_reaction (date + time).
+      # It timestamps brightness commands, preventing rapid repeat commands.
+      wled_last_reaction: input_datetime.wled_gledopto_last_reaction
+      wled_recent_effects: input_text.wled_gledopto_recent_effects
+      energy_entity: sensor.govee_audio_analyzer_audio_energy
+      bass_entity: sensor.govee_audio_analyzer_audio_bass
+      trend_entity: sensor.govee_audio_analyzer_audio_energy_trend
+      buildup_entity: binary_sensor.govee_audio_analyzer_audio_buildup
+      drop_entity: binary_sensor.govee_audio_analyzer_audio_drop
+      wled_enabled: true
+      # Aggression profile is clamped to 1..4 (default preserves v2-like pace).
+      aggression: "{{ [[light_reaction_aggression | default(3, true) | int(3), 1] | max, 4] | min }}"
+      # Cooldowns are seconds. Setting 4 requires frequent script calls.
+      rotation_by_aggression: {1: 30, 2: 20, 3: 15, 4: 5}
+      govee_cooldown_by_aggression: {1: 20, 2: 10, 3: 5, 4: 2}
+      brightness_cooldown_by_aggression: {1: 12, 2: 6, 3: 2, 4: 1}
+      wled_hold_seconds: 5
+      wled_history_count: 4
+      bass_boost_enabled: true
+      bass_boost_amount: 15
+      sync_bpm: "{{ bpm_sync_enabled | default(false) | bool }}"
+      supplied_bpm: "{{ bpm_value | default(0, true) | float(0) }}"
+      bpm_effects:
+        - Breathe
+        - Chase 2
+        - Colorwaves
+        - Ripple Peak
+        - Puddlepeak
+        - Puddles
+        - Juggles
+        - Rain
+  - variables:
+      wled_rotation_seconds: "{{ rotation_by_aggression[aggression | int(3)] }}"
+      govee_cooldown: "{{ govee_cooldown_by_aggression[aggression | int(3)] }}"
+      brightness_cooldown: "{{ brightness_cooldown_by_aggression[aggression | int(3)] }}"
+  # Guard against stale/unavailable core analyzer values. New fields are optional.
+  - condition: template
+    value_template: >-
+      {{ is_number(states(energy_entity)) and is_number(states(bass_entity)) }}
+  - variables:
+      # Legacy values for compatibility.
+      energy: "{{ states(energy_entity) | float(0) }}"
+      bass_fraction: "{{ states(bass_entity) | float(0) }}"
+      trend: "{{ states(trend_entity) }}"
+      # New independent band energies. If the upgraded analyzer isn't running,
+      # use a conservative fallback from the existing bass fraction/energy.
+      sub_bass_energy: "{{ states('sensor.govee_audio_analyzer_audio_sub_bass_energy') | float(0) }}"
+      bass_energy: >-
+        {{ states('sensor.govee_audio_analyzer_audio_bass_energy') | float(
+             (states(energy_entity) | float(0)) * (states(bass_entity) | float(0)) ) }}
+      mid_energy: "{{ states('sensor.govee_audio_analyzer_audio_mid_energy') | float(0) }}"
+      treble_energy: "{{ states('sensor.govee_audio_analyzer_audio_treble_energy') | float(0) }}"
+      onset_strength: "{{ states('sensor.govee_audio_analyzer_audio_onset_strength') | float(0) }}"
+      kick_strength: "{{ states('sensor.govee_audio_analyzer_audio_kick_strength') | float(0) }}"
+      snare_strength: "{{ states('sensor.govee_audio_analyzer_audio_snare_strength') | float(0) }}"
+      hihat_strength: "{{ states('sensor.govee_audio_analyzer_audio_hi_hat_strength') | float(0) }}"
+      buildup_score: "{{ states('sensor.govee_audio_analyzer_audio_buildup_score') | float(0) }}"
+      drop_score: "{{ states('sensor.govee_audio_analyzer_audio_drop_score') | float(0) }}"
+      beat_confidence: "{{ states('sensor.govee_audio_analyzer_audio_beat_confidence') | float(0) }}"
+      tempo_stability: "{{ states('sensor.govee_audio_analyzer_audio_tempo_stability') | float(0) }}"
+      analyzer_bpm: "{{ states('sensor.govee_audio_analyzer_audio_bpm') | float(0) }}"
+      onset: "{{ is_state('binary_sensor.govee_audio_analyzer_audio_onset', 'on') }}"
+      kick: "{{ is_state('binary_sensor.govee_audio_analyzer_audio_kick_candidate', 'on') }}"
+      snare: "{{ is_state('binary_sensor.govee_audio_analyzer_audio_snare_candidate', 'on') }}"
+      hihat: "{{ is_state('binary_sensor.govee_audio_analyzer_audio_hi_hat_candidate', 'on') }}"
+      buildup: "{{ is_state(buildup_entity, 'on') }}"
+      drop: "{{ is_state(drop_entity, 'on') }}"
+  - variables:
+      # Tier 1: energy / broad bands only; no drop, buildup, drum or onset events.
+      # Tier 2: add confirmed buildup/drop with conservative requirements.
+      # Tier 3: add kick/snare events; tier 4 adds hi-hat and lighter thresholds.
+      confirmed_drop: >-
+        {{ aggression | int(3) >= 2 and drop | bool
+           and drop_score | float(0) >= (0.70 if aggression | int(3) == 2 else 0.60) }}
+      confirmed_buildup: >-
+        {{ aggression | int(3) >= 2 and buildup | bool
+           and buildup_score | float(0) >= (0.60 if aggression | int(3) == 2 else 0.48) }}
+      strong_kick: >-
+        {{ aggression | int(3) >= 3 and kick | bool
+           and kick_strength | float(0) >= (0.32 if aggression | int(3) == 4 else 0.42)
+           and bass_energy | float(0) >= (0.28 if aggression | int(3) == 4 else 0.35)
+           and energy | float(0) >= 0.25 }}
+      strong_snare: >-
+        {{ aggression | int(3) >= 3 and snare | bool
+           and snare_strength | float(0) >= (0.43 if aggression | int(3) == 4 else 0.52)
+           and energy | float(0) >= 0.30 }}
+      strong_hihat: >-
+        {{ aggression | int(3) == 4 and hihat | bool
+           and hihat_strength | float(0) >= 0.32
+           and treble_energy | float(0) >= 0.32 }}
+      strong_bass: >-
+        {{ bass_energy | float(0) >= (0.80 if aggression | int(3) == 1 else 0.70)
+           or (sub_bass_energy | float(0) >= (0.82 if aggression | int(3) == 1 else 0.70)
+               and energy | float(0) >= 0.40) }}
+      reliable_analyzer_bpm: >-
+        {{ analyzer_bpm | float(0) >= 65 and analyzer_bpm | float(0) <= 190
+           and beat_confidence | float(0) >= 0.60
+           and tempo_stability | float(0) >= 0.55 }}
+  - variables:
+      # Explicit BPM supplied by the main DJ wins. Otherwise use analyzed BPM
+      # only when it is stable and credible. Never set speed from raw beat phase.
+      current_bpm: >-
+        {% if supplied_bpm | float(0) > 0 %}
+          {{ supplied_bpm | float(0) }}
+        {% elif reliable_analyzer_bpm | bool %}
+          {{ analyzer_bpm | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+      # Govee mode switching is cooldown-limited even at aggression 4.
+      target_mode: >-
+        {% set e = energy | float(0) %}
+        {% set b = bass_energy | float(0) %}
+        {% set m = mid_energy | float(0) %}
+        {% set t = treble_energy | float(0) %}
+        {% if confirmed_drop | bool or e >= (0.97 if aggression | int(3) == 1 else 0.93) %}
+          Seperation
+        {% elif confirmed_buildup | bool and e >= 0.40 %}
+          Fountain
+        {% elif e >= 0.72 and b >= 0.62 and trend == 'rising' %}
+          Hopping
+        {% elif e >= 0.65 and b >= 0.55 %}
+          Rhythm
+        {% elif e >= 0.60 and t >= 0.65 and b < 0.45 %}
+          Shiny
+        {% elif e >= 0.45 and trend in ['steady', 'stable'] %}
+          Energic
+        {% elif trend == 'rising' and e >= 0.30 %}
+          Bloom
+        {% elif trend == 'falling' and e >= 0.20 %}
+          Day and Night
+        {% elif e >= 0.55 or m >= 0.68 %}
+          Shiny
+        {% elif e >= 0.20 %}
+          Fountain
+        {% else %}
+          Piano Keys
+        {% endif %}
+  - if:
+      - condition: template
+        value_template: >-
+          {{ (target_mode | trim) in (state_attr(music_select, 'options') or [])
+             and states(music_select) != (target_mode | trim)
+             and (as_timestamp(now()) - as_timestamp(states[music_select].last_changed, 0))
+                 >= govee_cooldown | int(5) }}
+    then:
+      - action: select.select_option
+        target:
+          entity_id: "{{ music_select }}"
+        data:
+          option: "{{ target_mode | trim }}"
+        continue_on_error: true
+  - variables:
+      # Persistent music state steers 15-second effect rotations. Drum events
+      # only accent brightness so the effect does not churn on every hit.
+      music_level: >-
+        {% set e = energy | float(0) %}
+        {% set b = bass_energy | float(0) %}
+        {% set m = mid_energy | float(0) %}
+        {% set t = treble_energy | float(0) %}
+        {% if confirmed_drop | bool or e >= (0.97 if aggression | int(3) == 1 else 0.92) %}
+          peak
+        {% elif confirmed_buildup | bool %}
+          buildup
+        {% elif e >= 0.50 and b >= 0.60 %}
+          bass
+        {% elif e >= 0.65 or (e >= 0.48 and t >= 0.72) %}
+          high
+        {% elif trend == 'falling' and e >= 0.20 %}
+          falling
+        {% elif e >= 0.35 or m >= 0.65 %}
+          medium
+        {% else %}
+          low
+        {% endif %}
+      bass_hit: >-
+        {{ bass_boost_enabled | bool and
+           ((strong_kick | bool) or
+            (strong_bass | bool and energy | float(0) >=
+             (0.65 if aggression | int(3) == 1 else 0.50))) }}
+      transient_accent: >-
+        {{ (strong_snare | bool or strong_hihat | bool)
+           and onset_strength | float(0) >= (0.32 if aggression | int(3) == 4 else 0.45)
+           and energy | float(0) >= 0.40 }}
+  - variables:
+      wled_presets:
+        peak:
+          - {effect: Ripple Peak, brightness: 95}
+          - {effect: Puddlepeak, brightness: 95}
+          - {effect: Freqwave, brightness: 95}
+        buildup:
+          - {effect: Juggles, brightness: 90}
+          - {effect: Puddles, brightness: 90}
+          - {effect: Gravimeter, brightness: 90}
+        bass:
+          - {effect: Gravcenter, brightness: 95}
+          - {effect: Freqwave, brightness: 95}
+          - {effect: Puddlepeak, brightness: 95}
+        high:
+          - {effect: Freqpixels, brightness: 90}
+          - {effect: Pixelwave, brightness: 90}
+          - {effect: Waterfall, brightness: 90}
+        medium:
+          - {effect: Gravimeter, brightness: 80}
+          - {effect: Puddles, brightness: 80}
+          - {effect: Noisemeter, brightness: 85}
+        falling:
+          - {effect: Rain, brightness: 70}
+          - {effect: Chase 2, brightness: 70}
+          - {effect: Colorloop, brightness: 65}
+        low:
+          - {effect: Breathe, brightness: 45}
+          - {effect: Chase 2, brightness: 50}
+          - {effect: Colorwaves, brightness: 55}
+  - variables:
+      available_wled_effects: "{{ state_attr(wled_entity, 'effect_list') | default([], true) }}"
+      recent_effects: "{{ states(wled_recent_effects) | from_json([]) }}"
+      current_wled_effect: "{{ state_attr(wled_entity, 'effect') | default('', true) }}"
+      last_wled_timestamp: "{{ as_timestamp(states(wled_last_change), 0) }}"
+  - variables:
+      all_wled_choices: >-
+        {{ wled_presets['peak'] + wled_presets['buildup'] +
+           wled_presets['bass'] + wled_presets['high'] +
+           wled_presets['medium'] + wled_presets['falling'] +
+           wled_presets['low'] }}
+      preferred_choices: >-
+        {{ wled_presets[music_level | trim]
+           | selectattr('effect', 'in', available_wled_effects)
+           | rejectattr('effect', 'in', recent_effects)
+           | rejectattr('effect', 'eq', current_wled_effect)
+           | unique(attribute='effect') | list }}
+      fallback_choices: >-
+        {{ all_wled_choices
+           | selectattr('effect', 'in', available_wled_effects)
+           | rejectattr('effect', 'in', recent_effects)
+           | rejectattr('effect', 'eq', current_wled_effect)
+           | unique(attribute='effect') | list }}
+  - variables:
+      wled_choices: "{{ preferred_choices if preferred_choices | count > 0 else fallback_choices }}"
+      wled_rotation_index: >-
+        {% if wled_choices | count > 0 %}
+          {{ ((as_timestamp(now()) // (wled_rotation_seconds | int(15))) | int)
+             % (wled_choices | count) }}
+        {% else %}
+          0
+        {% endif %}
+  - variables:
+      selected_wled: >-
+        {{ wled_choices[wled_rotation_index | int]
+           if wled_choices | count > 0 else {'effect': '', 'brightness': 70} }}
+      # Hold the current effect's base level until rotation. This prevents the
+      # pending selection from causing 15-second brightness mismatch/flicker.
+      held_wled_base: >-
+        {% set matching = all_wled_choices
+           | selectattr('effect', 'eq', current_wled_effect) | list %}
+        {{ matching[0]['brightness'] if matching | count > 0 else 70 }}
+      wled_elapsed: "{{ as_timestamp(now()) - (last_wled_timestamp | float(0)) }}"
+  - variables:
+      last_reaction_timestamp: >-
+        {{ as_timestamp(states(wled_last_reaction), 0)
+           if has_value(wled_last_reaction) else 0 }}
+      reaction_elapsed: "{{ as_timestamp(now()) - last_reaction_timestamp | float(0) }}"
+      already_in_buildup: >-
+        {{ current_wled_effect in
+           (wled_presets['buildup'] | map(attribute='effect') | list) }}
+      wled_can_change: >-
+        {{ wled_elapsed | float(0) >= wled_rotation_seconds | int(15)
+           or (confirmed_buildup | bool and not (already_in_buildup | bool)
+               and aggression | int(3) >= 2
+               and wled_elapsed | float(0) >= (3 if aggression | int(3) == 4 else wled_hold_seconds | int(5))) }}
+      desired_wled_effect: "{{ selected_wled['effect'] }}"
+  - variables:
+      wled_effect_update: >-
+        {{ wled_enabled | bool and has_value(wled_entity)
+           and has_value(wled_last_change) and has_value(wled_recent_effects)
+           and (desired_wled_effect | trim) in available_wled_effects
+           and (desired_wled_effect | trim) not in recent_effects
+           and (desired_wled_effect | trim) != current_wled_effect
+           and wled_can_change | bool }}
+  - variables:
+      base_brightness: >-
+        {{ selected_wled['brightness'] | int(70)
+           if wled_effect_update | bool else held_wled_base | int(70) }}
+      desired_wled_brightness: >-
+        {% set base = base_brightness | int(70) %}
+        {% if confirmed_drop | bool %}
+          {{ [base + 15, 100] | min }}
+        {% elif bass_hit | bool %}
+          {{ [base + ((bass_boost_amount | int(15)) * (0.6 if aggression | int(3) == 1
+              else 0.8 if aggression | int(3) == 2 else 1.0 if aggression | int(3) == 3 else 1.3)) | round(0) | int, 100] | min }}
+        {% elif transient_accent | bool %}
+          {{ [base + 10, 100] | min }}
+        {% elif energy | float(0) >= (0.94 if aggression | int(3) == 1 else 0.88) %}
+          {{ [base + 8, 100] | min }}
+        {% else %}
+          {{ base }}
+        {% endif %}
+      current_wled_brightness: "{{ state_attr(wled_entity, 'brightness') | int(0) }}"
+  - variables:
+      brightness_difference: >-
+        {{ (((current_wled_brightness | float(0)) * 100 / 255)
+            - (desired_wled_brightness | float(70))) | abs }}
+      speed_from_bpm: >-
+        {% set bpm = current_bpm | float(0) %}
+        {{ (45 + (bpm - 60) / 120 * 180) | round(0) | int if bpm > 0 else 0 }}
+      desired_speed: >-
+        {{ [ [speed_from_bpm | int, state_attr(wled_speed_entity, 'min') | int(0)] | max,
+             state_attr(wled_speed_entity, 'max') | int(255)] | min }}
+      bpm_speed_update: >-
+        {{ sync_bpm | bool and current_bpm | float(0) > 0
+           and has_value(wled_speed_entity)
+           and ((desired_wled_effect | trim) if wled_effect_update | bool
+                else current_wled_effect) in bpm_effects
+           and ((states(wled_speed_entity) | float(0)) - (desired_speed | float(0))) | abs >= 12 }}
+  - if:
+      - condition: template
+        value_template: "{{ wled_effect_update | bool }}"
+    then:
+      - action: light.turn_on
+        target:
+          entity_id: "{{ wled_entity }}"
+        data:
+          effect: "{{ desired_wled_effect | trim }}"
+          brightness_pct: "{{ desired_wled_brightness | int(70) }}"
+        continue_on_error: true
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: "{{ wled_last_reaction }}"
+        data:
+          timestamp: "{{ as_timestamp(now()) }}"
+        continue_on_error: true
+      - action: input_text.set_value
+        target:
+          entity_id: "{{ wled_recent_effects }}"
+        data:
+          value: >-
+            {{ (recent_effects + [desired_wled_effect | trim])
+               [-(wled_history_count | int(4)):] | to_json }}
+        continue_on_error: true
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: "{{ wled_last_change }}"
+        data:
+          timestamp: "{{ as_timestamp(now()) }}"
+        continue_on_error: true
+    else:
+      - if:
+          - condition: template
+            value_template: >-
+              {{ wled_enabled | bool and is_state(wled_entity, 'on')
+                 and brightness_difference | float(0) >= 12
+                 and has_value(wled_last_reaction)
+                 and reaction_elapsed | float(0) >= brightness_cooldown | int(2) }}
+        then:
+          - action: light.turn_on
+            target:
+              entity_id: "{{ wled_entity }}"
+            data:
+              brightness_pct: "{{ desired_wled_brightness | int(70) }}"
+            continue_on_error: true
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: "{{ wled_last_reaction }}"
+            data:
+              timestamp: "{{ as_timestamp(now()) }}"
+            continue_on_error: true
+  # Update tempo independently of effect rotation, only for meaningful changes.
+  - if:
+      - condition: template
+        value_template: "{{ bpm_speed_update | bool }}"
+    then:
+      - action: number.set_value
+        target:
+          entity_id: "{{ wled_speed_entity }}"
+        data:
+          value: "{{ desired_speed | int(0) }}"
+        continue_on_error: true

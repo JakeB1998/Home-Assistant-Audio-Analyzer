@@ -1,31 +1,36 @@
-# Govee Audio Analyzer — Home Assistant app repository
+# Govee Audio Analyzer — Home Assistant add-on repository
 
-This repository contains a community Home Assistant app that receives Sendspin audio from Music Assistant, calculates audio measurements, and publishes MQTT discovery sensors.
+This repository contains a community Home Assistant add-on receiving direct PCM audio over Music Assistant **Sendspin**, analyzing it, and publishing MQTT discovery entities for Home Assistant. **No microphone is required.**
 
-## Install from Home Assistant
+## Install / upgrade
 
-1. Create a **public GitHub repository** and upload the files in this directory **to the root** of the repository. The root must contain `repository.yaml` and `govee_audio_analyzer/`.
-2. In Home Assistant go to **Settings → Apps → Install app → ⋮ → Repositories**.
-3. Add the complete GitHub repository URL.
-4. Open **Govee Sendspin Audio Analyzer**, install it, configure the Sendspin server URL and MQTT credentials, and start it.
-5. Enable the analyzer's Sendspin player in Music Assistant and play to it (or group it with your speaker if compatible).
-6. Review app logs and MQTT sensors in Developer Tools → States.
+1. Back up your running add-on, automation, and MQTT settings. If you already have this GitHub repository installed, replace its contents with these files **at the repository root** and push the changes. Keep `repository.yaml` at the root and `govee_audio_analyzer/` as a subdirectory.
+2. In Home Assistant, refresh the app/add-on store, select **Govee Sendspin Audio Analyzer**, and update to **0.4.0**. If it does not appear, check that the repository URL is added and refresh repository metadata.
+3. Keep your `sendspin_server` and MQTT settings. This upgrade does not change Sendspin identity/pairing files in `/data`.
+4. Restart the app. Confirm it connects to Music Assistant and the `Govee Audio Analyzer` Sendspin player is receiving audio.
+5. Check newly discovered MQTT sensors under the existing device. Existing nine MQTT keys and unique IDs are preserved, though **`energy` reacts faster** and the band amplitudes have corrected normalization; review thresholds.
+6. Optionally copy `examples/govee_smart_music_dj_upstairs_v3.yaml` into your Home Assistant script editor. This is a separate example, **not automatically installed** by the add-on; its entity IDs and helpers need to match your system.
 
-**Status:** The Python analyzer and simulated PCM callback tests have passed; the encrypted Sendspin connection and Home Assistant app build have *not* been tested on your server. Installation may require debugging.
+## What's new in 0.4.0
 
-**Security:** Never commit MQTT passwords, Sendspin pairing state, or other secrets to GitHub. Enter credentials in the Home Assistant app's Configuration tab after installation. The repository's `config.yaml` has blank credentials.
+- Retains original nine keys: `energy`, `rms`, `bass`, `mid`, `treble`, `trend`, `onset`, `buildup`, `drop`.
+- Corrects FFT window/Parseval normalization. The original `bass`, `mid`, `treble` remain relative shares (NOT intensity percentages).
+- Adds independently adaptive sub-bass/bass/mid/treble energy, transient RMS, peak amplitude, spectral descriptors, onset strength and density, dynamic range estimate, BPM, beat phase/confidence/stability, percussion *candidates*, and heuristic buildup/drop scores.
+- Adds MQTT discovery for each new metric and `expire_after` for binary sensors so stale event flags do not remain indefinitely after a stream stops.
+- Retains the existing Sendspin receiver, PCM requirements, and `aiosendspin==9.1.1` pairing protocol.
 
-**Deployment:** This uses a local build on the Home Assistant host (Dockerfile), rather than a prebuilt container image. Building can take some time and requires network access and sufficient free space. For a reliable production release, publish a multi-architecture image using GitHub Actions.
+See [`govee_audio_analyzer/DOCS.md`](govee_audio_analyzer/DOCS.md) for details and caveats.
 
+## Verification
 
-## 0.3.2 compatibility fix
+Run from the repository root with NumPy and Python installed:
 
-Pinned `aiosendspin==9.1.1` to match the older Noise handshake used by Music Assistant 2.10.x and adjusted the three-argument audio callback. This specifically targets the `psk_category` missing-field error from the previous 0.3.1 build. It is not yet validated against the user's live Music Assistant server. If the server uses a newer protocol version, verify the Music Assistant version before choosing a different SDK.
+```bash
+PYTHONPATH=govee_audio_analyzer python -m unittest discover -s tests -v
+```
 
-### v0.3.3
+Synthetic PCM tests, simulated Sendspin callbacks, and mocked MQTT discovery were exercised. **Live Home Assistant/Music Assistant pairing, Docker build, actual broker delivery, and physical lights have not been validated.** Music-event classifiers are heuristics, not ML instrument transcription. Test the effect thresholds with your speakers before depending on them.
 
-Use `pairing_v9.json` for the aiosendspin 9.x pairing store, preserving the incompatible 10.x `pairing.json` and persistent `identity.key`.
+## Security
 
-### v0.3.4 — Pairing PSK setup
-
-On first start the app generates a cryptographically random per-device Sendspin Pairing PSK using `aiosendspin 9.1.1`, saves it in the persistent `pairing_v9.json` store, and logs a version-0 `SP:0...` token. Paste that token into the Music Assistant pairing prompt. It will remain the same on restart and update, provided `/data` is preserved. Do not post this token publicly: it is a persistent credential that can authorize a server to pair with your analyzer. The existing device identity is reused. This corrects the absence of PSK provisioning in v0.3.3. Live Music Assistant pairing has not yet been tested.
+Never commit MQTT passwords, Sendspin pairing tokens, state stored in `/data`, or other secrets. Configure credentials through the add-on Configuration tab. The add-on may print a pairing token to its private logs; treat it as a secret.

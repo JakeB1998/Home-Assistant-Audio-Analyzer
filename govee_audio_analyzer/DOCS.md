@@ -1,33 +1,54 @@
-# Govee Sendspin Audio Analyzer v0.3
+# Govee Sendspin Audio Analyzer v0.4.0
 
-Receives real-time PCM from Music Assistant using `aiosendspin` 10.2.1 (Python), analyzes 100-ms windows, and publishes MQTT discovery sensors to Home Assistant. No LedFx, C++ client, or second audio analyzer needed.
+## Input and processing
 
-**Status:** Python code and synthetic audio tests are provided. The encrypted live Sendspin handshake, Home Assistant app build, and MQTT broker interaction have **not** been end-to-end tested against your server. Verify your Music Assistant version speaks the current Sendspin v1 protocol. Music Assistant may require enabling unpaired playback for this player.
+Receives **22,050 Hz, 16-bit, mono PCM** from the Music Assistant Sendspin output player, processes 2,205 samples (100 ms) at a time, and publishes one non-retained MQTT JSON message per hop to `govee_audio/state`. The long FFT is 8,192 samples for accurate low-frequency resolution; a shorter overlapping FFT is used for transient candidates. Analysis timestamps are based on input sample count rather than wall-clock time. Direct audio is not stored on disk.
 
-## Home Assistant OS installation
+**This is a receiver, not a decoder:** Music Assistant must send PCM in the declared format. The add-on's entry point is `run.py`, which runs `sendspin_receiver.py`. The standalone analyzer's `AUDIO_INPUT` FFmpeg mode is available for command-line testing, not the add-on's normal playback path.
 
-1. Ensure Music Assistant and the Mosquitto broker are installed. Make a dedicated MQTT username/password in Home Assistant.
-2. Copy the `home_assistant_app/govee_audio_analyzer/` directory to `/addons/local/govee_audio_analyzer/` on your HA OS machine (for example using Studio Code Server or Samba). The package includes all three Python files in the add-on folder.
-3. Go to **Settings → Apps → App Store → ⋮ → Check for updates** (or reload the store). Under **Local apps**, install **Govee Sendspin Audio Analyzer**.
-4. Set `sendspin_server` to `ws://YOUR_MUSIC_ASSISTANT_HOST:8927/sendspin`. Do not use Music Assistant port 8095 for a third-party client. Fill MQTT host/port/user/password. Use the local IP if your `.local` domain fails DNS resolution inside the app.
-5. Start the app; inspect its **Logs** for `Sendspin connected`.
-6. Music Assistant → Players: find **Govee Audio Analyzer**. Enable it and group it with Apollo Cast. The analyzer does not play sound.
-7. While playing, app Logs should show `Receiving audio:` every ~10 seconds. Developer Tools → States should show the `sensor.audio_energy`, `sensor.audio_bass`, `sensor.audio_energy_trend` and other discovered entities (Home Assistant may append a suffix if names clash). Use the *actual* entity IDs shown in HA for automations.
+## MQTT keys / Home Assistant entities
 
-## Docker Compose alternative
+All numeric sensor keys use `homeassistant/sensor/govee_audio_<key>/config`, numeric fields live in the JSON on `govee_audio/state`; binary keys use `homeassistant/binary_sensor/govee_audio_<key>/config` and evaluate ON/OFF. The existing MQTT unique IDs are unchanged.
 
-Copy `.env.example` to `.env`; update hostname and MQTT credentials; run `docker compose up --build -d` on a Docker-capable machine. This is not executed in the Home Assistant UI.
+Original fields: `energy`, `rms`, `bass`, `mid`, `treble`, `trend`, `onset`, `buildup`, `drop`.
 
-## Audio behavior and limitations
+Added numeric fields:
 
-- Advertises **PCM 22050 Hz / 16-bit / mono**, asks Music Assistant to resample, and processes the stream without a separate decoder or FFmpeg.
-- Computes adaptive loudness, spectral band fractions, onsets, and heuristic buildup/drop indicators. `bass` is relative bass *share*, not calibrated absolute bass power. `trend` and drops are heuristic.
-- Publishes approximately 10 readings/second. The receiver never saves audio to disk. Device identity and pairing state are saved under `/data`.
-- Unpaired listening is enabled for this *output-only* client. Restrict to your trusted LAN; update pairing policy later if needed.
-- MQTT Discovery availability goes offline on graceful shutdown; `expire_after` marks stale numeric readings unavailable during interruption.
-- Current project does not implement loudspeaker synchronization delays. It receives samples as delivered by Sendspin. Light mode changes through Home Assistant are slower than beat-by-beat lighting updates.
+- `instant_rms`, `peak_amplitude`: per-100-ms amplitude measurements.
+- `sub_bass_energy`, `bass_energy`, `mid_energy`, `treble_energy`: independent 0..1 levels using adaptive peaks; **not calibrated physical or absolute loudness**.
+- `spectral_flux`, `onset_strength`, `onset_density`: transient and attack indicators.
+- `spectral_centroid_hz`, `spectral_rolloff_hz`, `spectral_flatness`: spectral shape descriptors.
+- `bpm`, `beat_confidence`, `beat_phase`, `tempo_stability`: estimated pulse timing/tempo. Tempo can confuse subdivisions, swing, or complex rhythmic patterns.
+- `kick_strength`, `snare_strength`, `hihat_strength`: relative spectral attack scores at each detected onset.
+- `dynamic_range_db`: short-term energy percentile ratio in decibels, **not** studio loudness range / calibrated dB SPL.
+- `buildup_score`, `drop_score`: heuristic scores, not definitive musical structure recognition.
 
-## Source references
+Added binary keys: `beat`, `kick_candidate`, `snare_candidate`, `hihat_candidate`. Candidate flags are not definitive instrument identification. Short events may last only one 100-ms MQTT publication and be missed by slower Home Assistant automations.
 
-- https://github.com/Sendspin/aiosendspin
-- https://www.music-assistant.io/player-support/sendspin/
+The existing `bass`, `mid`, `treble` remain ratios summing to approximately 1, while `bass_energy` and similar values indicate independent adaptive band activity. The older `rms` remains a longer-window raw RMS, whereas `instant_rms` responds to each new 100-ms block. Both raw RMS fields are uncalibrated.
+
+## Home Assistant setup
+
+1. Install Music Assistant and an MQTT broker (such as Mosquitto). Set a dedicated MQTT account, if required.
+2. Add this GitHub add-on repository under **Settings → Apps → Add-on store/Install app → ⋮ → Repositories**, depending on HA version; add the URL.
+3. Install **Govee Sendspin Audio Analyzer** and configure `sendspin_server` (for example `ws://YOUR_MUSIC_ASSISTANT_HOST:8927/sendspin`) and MQTT credentials.
+4. Start the app and check the private logs for Sendspin pairing information and `Sendspin connected`.
+5. In Music Assistant, enable and direct playback to the **Govee Audio Analyzer** player (or group it with your speaker if supported).
+6. Look up actual entity IDs in Home Assistant: the generated entity ID can vary when an entity with a matching name already exists. The v3 automation under `examples/` assumes names beginning `sensor.govee_audio_analyzer_audio_`.
+
+The addon retains a persistent `identity.key` and `pairing_v9.json` (for `aiosendspin==9.1.1`) in `/data`. **Do not commit these files or pairing tokens to GitHub**. This revision does not change the encrypted Sendspin client API/pairing flow that was used in 0.3.4; compatibility still depends on the Music Assistant server version.
+
+## Lighting latency and limits
+
+- MQTT publishes about 10 times per second. Home Assistant script invocation and WLED/Govee updates can be much slower than raw audio delivery. `beat_phase` is telemetry, not synchronized execution across devices.
+- The sample-based tempo tracker is designed to be conservative; a valid nonzero BPM can take a few seconds to settle. Downbeats and tempo aliases cannot be guaranteed from mono audio.
+- Drop recognition requires a recent buildup and short low-energy break, and may miss drops that don't fit this pattern.
+- Use brightness/mode cooldowns and avoid changing a light effect on every onset. The example automation has `light_reaction_aggression` levels 1–4 and assumes an additional Date+Time helper named `input_datetime.wled_gledopto_last_reaction`.
+
+## Development tests
+
+```bash
+PYTHONPATH=govee_audio_analyzer python -m unittest discover -s tests -v
+```
+
+No external Sendspin or MQTT server is required for the tests. They do **not** prove that the add-on builds or pairs on your real HA environment.
