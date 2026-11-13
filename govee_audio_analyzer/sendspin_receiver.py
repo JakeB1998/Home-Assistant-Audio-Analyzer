@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from analyzer import Analyzer, HOP, connect_mqtt, TOPIC, AVAIL
+from analyzer import Analyzer, HOP, KickEventPublisher, connect_mqtt, TOPIC, AVAIL
 
 LOG = logging.getLogger("govee-sendspin")
 RATE = 22050
@@ -26,6 +26,7 @@ class PcmSink:
     def __init__(self, mqtt_client=None):
         self.mqtt_client = mqtt_client
         self.analyzer = Analyzer()
+        self.kick_events = KickEventPublisher()
         self.buffer = bytearray()
         self.active = False
         self.last_audio = None
@@ -35,17 +36,20 @@ class PcmSink:
     def start(self, msg):
         self.buffer.clear()
         self.analyzer = Analyzer()
+        self.kick_events.previous_candidate = False
         self.active = True
         LOG.info("Sendspin stream started: %s", msg)
 
     def clear(self, roles):
         self.buffer.clear()
         self.analyzer = Analyzer()
+        self.kick_events.previous_candidate = False
         LOG.info("Sendspin stream cleared")
 
     def stop(self, roles):
         self.buffer.clear()
         self.active = False
+        self.kick_events.previous_candidate = False
         LOG.info("Sendspin stream ended")
 
     def audio(self, timestamp_us, data, audio_format):
@@ -70,6 +74,8 @@ class PcmSink:
             self.last_audio = time.monotonic()
             if self.mqtt_client is not None:
                 self.mqtt_client.publish(TOPIC, json.dumps(values), qos=0, retain=False)
+                if self.kick_events.process(values, self.mqtt_client):
+                    LOG.debug("Published kick event #%s", self.kick_events.event_count)
             else:
                 print(json.dumps(values), flush=True)
             if time.monotonic() - self.last_debug > 10:

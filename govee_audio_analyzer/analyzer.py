@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import deque
 
 import numpy as np
@@ -19,6 +20,7 @@ FFT_SIZE = 8192                 # 372 ms: frequency bands
 TRANSIENT_SIZE = 3072           # 139 ms, overlaps 100-ms hops (no missing samples)
 TOPIC = os.getenv("MQTT_TOPIC", "govee_audio/state")
 AVAIL = os.getenv("MQTT_AVAILABILITY_TOPIC", "govee_audio/availability")
+KICK_EVENT_TOPIC = os.getenv("KICK_EVENT_TOPIC", "reactive_lights/events/kick")
 INPUT = os.getenv("AUDIO_INPUT", "")
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
 EPS = 1e-12
@@ -318,6 +320,35 @@ class Analyzer:
         }
 
 
+
+class KickEventPublisher:
+    """Publish one non-retained MQTT event per new kick_candidate onset.
+
+    Call once per processed analysis hop. The detector itself already has a
+    refractory period; rising-edge detection adds protection against duplicate
+    frames while retaining every newly accepted event.
+    """
+
+    def __init__(self):
+        self.previous_candidate = False
+        self.event_count = 0
+
+    def process(self, metrics, mqtt_client):
+        candidate = metrics.get("kick_candidate") is True
+        is_new = candidate and not self.previous_candidate
+        self.previous_candidate = candidate
+        if not is_new or mqtt_client is None:
+            return False
+        self.event_count += 1
+        event = {
+            "event": "kick",
+            "count": self.event_count,
+            "strength": float(metrics.get("kick_strength", 0.0)),
+            "timestamp": time.time(),
+        }
+        mqtt_client.publish(KICK_EVENT_TOPIC, json.dumps(event), qos=0, retain=False)
+        return True
+
 def connect_mqtt():
     import paho.mqtt.client as mqtt
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="govee_audio_analyzer")
@@ -358,6 +389,7 @@ def main():
                             stdout=subprocess.PIPE)
     client = None if DRY_RUN else connect_mqtt()
     analyzer = Analyzer()
+    kick_events = KickEventPublisher()
     try:
         while True:
             block = proc.stdout.read(HOP * 2)
@@ -367,6 +399,7 @@ def main():
             result = analyzer.process(samples)
             if client:
                 client.publish(TOPIC, json.dumps(result), retain=False)
+                kick_events.process(result, client)
             else:
                 print(json.dumps(result), flush=True)
     finally:

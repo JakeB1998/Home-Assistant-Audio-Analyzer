@@ -52,3 +52,10 @@ PYTHONPATH=govee_audio_analyzer python -m unittest discover -s tests -v
 ```
 
 No external Sendspin or MQTT server is required for the tests. They do **not** prove that the add-on builds or pairs on your real HA environment.
+
+
+## v0.4.1 kick event output
+
+For each newly detected `kick_candidate`, publish JSON to the non-retained
+MQTT topic `reactive_lights/events/kick` with event, count, strength, and
+timestamp. The regular `govee_audio/state` messages and discovery are unchanged.
