@@ -64,3 +64,33 @@ class PlaybackStatsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class FalsePositiveRegressionTests(unittest.TestCase):
+    def _events(self, kind):
+        x = np.zeros(RATE * 5, dtype=np.float32)
+        rng = np.random.default_rng(2)
+        for onset in (0.5, 1.2, 1.9, 2.6, 3.3, 4.0):
+            start = int(onset * RATE)
+            t = np.arange(6500) / RATE
+            if kind == 'kick':
+                pulse = 0.7 * np.sin(2 * np.pi * (65*t + 14*t*np.exp(-t*40))) * np.exp(-35*t)
+            elif kind == 'plucked_bass':
+                pulse = 0.5 * np.sin(2*np.pi*72*t) * np.exp(-7*t)
+            elif kind == 'sustained_note':
+                pulse = 0.5 * np.sin(2*np.pi*72*t) * np.exp(-2*t)
+            else:
+                pulse = 0.5 * rng.normal(size=len(t)) * np.exp(-35*t)
+            x[start:start+len(t)] += pulse.astype('f')
+        return detect(x)[1]
+
+    def test_fast_kicks_survive_confirmation(self):
+        self.assertEqual(len(self._events('kick')), 6)
+
+    def test_plucked_bass_note_does_not_count_as_kick(self):
+        self.assertEqual(len(self._events('plucked_bass')), 0)
+
+    def test_sustained_pitched_note_does_not_count_as_kick(self):
+        self.assertEqual(len(self._events('sustained_note')), 0)
+
+    def test_snare_like_broadband_noise_rejected(self):
+        self.assertEqual(len(self._events('snare')), 0)

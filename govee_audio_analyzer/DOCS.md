@@ -65,3 +65,14 @@ timestamp. The regular `govee_audio/state` messages and discovery are unchanged.
 Fast kick detector analyzes PCM every ~25 ms (75 ms minimum between accepted kicks), separately from original 100-ms audio metrics. Sends JSON to `reactive_lights/events/kick`: `event`, `count`, `strength`, `timestamp`. MQTT events are non-retained. It does not alter the `govee_audio/state` legacy kick metrics.
 
 Configure `log_level: DEBUG` for per-kick logs and 10-second health checks. Each 60 seconds of active Sendspin streaming logs a long INFO report with fast kick count, other percussive/onset/buildup/drop counts and audio statistics. Logs also summarize each stream at the end. `kick_sensitivity` is between `0.0` and `1.0`, default `0.55`; restart add-on after change.
+
+
+## v0.4.3: stricter kick classification (75 ms refractory preserved)
+
+The fast MQTT kick detector now waits ~75 ms after the low-frequency attack to verify a rapid decay envelope. It also rejects very weak PCM blocks, requires sub-bass presence, rescales confidence to avoid saturating at 1.0, and prevents repeated tail triggers. This adds ~75 ms onset-to-publication latency to improve precision. The minimum spacing between **accepted onset timestamps** remains 75 ms.
+
+New optional configuration: `kick_decay_ratio_max: 0.50` (0.15–0.95). Smaller values are **stricter** (fewer events); larger values allow longer decay (more events and false positives). `kick_sensitivity` still controls attack thresholds, and higher is more sensitive. Changes require restarting the add-on.
+
+DEBUG per-kick logs now include `sub_ratio` and `decay_ratio`. Ten-second detector health logs report `decay_rejects`, `subbass_rejects`, and candidate/accepted counts. Existing 60-second playback summaries, all legacy sensors, MQTT topic, and WLED automation protocol are unchanged.
+
+This remains a heuristic, not an instrument classifier. Mixed songs and bass sounds with kick-like envelopes can still cause false positives; real-world music validation is still required.

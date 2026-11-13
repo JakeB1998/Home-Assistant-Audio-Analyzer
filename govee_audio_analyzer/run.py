@@ -13,6 +13,7 @@ for key, value in {
     'STATE_DIR': '/data',
     'LOG_LEVEL': opts.get('log_level', 'DEBUG'),
     'KICK_SENSITIVITY': opts.get('kick_sensitivity', 0.55),
+    'KICK_DECAY_RATIO_MAX': opts.get('kick_decay_ratio_max', 0.50),
 }.items():
     os.environ[key] = str(value)
 os.execv('/opt/venv/bin/python', ['/opt/venv/bin/python', '-u', '/opt/analyzer/sendspin_receiver.py'])

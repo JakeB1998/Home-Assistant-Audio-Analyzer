@@ -88,3 +88,14 @@ Python process detects a kick and publishes a message.
 **Security:** Sendspin currently prints a private pairing token at startup for pairing. Do not share unredacted logs publicly.
 
 **Upgrade:** Replace files in the existing `/addons` repository, refresh Add-on Store, rebuild the add-on, and restart it. Add-on configuration now exposes `log_level` and `kick_sensitivity`; if the add-on retains old options, add them in the Configuration tab (`DEBUG` and `0.55`). Listen to `reactive_lights/events/#` in MQTT to verify kick events. Ensure the Home Assistant kick automation is enabled and its REST WLED brightness command works separately.
+
+
+## v0.4.3: fewer false kick events
+
+- Two-stage kick detection: low-frequency transient followed by ~75 ms decay-envelope confirmation.
+- Keeps 75 ms minimum between accepted kick onsets; publishes an event ~75 ms after each accepted onset.
+- Rejects steady bass, artificially abrupt low-note tails, weak audio blocks and many snare-like transients.
+- Configuration: `kick_decay_ratio_max: 0.50` (lower is stricter); `kick_sensitivity: 0.55`; `log_level: DEBUG`.
+- Per-kick DEBUG logs include decay ratio; ten-second logs report rejection counts.
+- No changes to HA MQTT topic `reactive_lights/events/kick`, existing 60-second summaries or legacy analyzer entities.
+- Synthetic tests are not representative of every mastered recording. Kick classification is still approximate.

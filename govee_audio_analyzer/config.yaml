@@ -1,7 +1,7 @@
 name: Govee Sendspin Audio Analyzer
-version: 0.4.2
+version: 0.4.3
 slug: govee_audio_analyzer
-description: "Advanced Sendspin PCM analysis, MQTT sensors, and 25ms adaptive kick detection and 60s playback logs"
+description: "Advanced Sendspin PCM analysis, MQTT sensors, and 25ms two-stage kick detection and 60s playback logs"
 url: https://www.music-assistant.io/player-support/sendspin/
 init: false
 arch:
@@ -17,6 +17,7 @@ options:
   mqtt_password: ""
   log_level: "DEBUG"
   kick_sensitivity: 0.55
+  kick_decay_ratio_max: 0.50
 schema:
   sendspin_server: str
   mqtt_host: str
@@ -25,3 +26,4 @@ schema:
   mqtt_password: password
   log_level: list(INFO|DEBUG|WARNING|ERROR)
   kick_sensitivity: float(0.0,1.0)
+  kick_decay_ratio_max: float(0.15,0.95)

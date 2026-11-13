@@ -90,9 +90,9 @@ class PcmSink:
             detected = self.fast_kick.process(sample_block)
             if detected:
                 self.stats.observe_kick(detected)
-                LOG.debug("KICK DETECTED strength=%.3f relative_attack=%.3f spectral_attack=%.5f bass_presence=%.3f threshold=%.5f time=%.3f",
+                LOG.debug("KICK DETECTED strength=%.3f relative_attack=%.3f spectral_attack=%.5f bass_presence=%.3f sub_ratio=%.3f decay_ratio=%.3f threshold=%.5f time=%.3f",
                           detected['strength'], detected['relative_attack'], detected['spectral_attack'],
-                          detected['bass_presence'], detected['threshold'], detected['t_audio'])
+                          detected['bass_presence'], detected['sub_ratio'], detected['decay_ratio'], detected['threshold'], detected['t_audio'])
                 if self.mqtt_client is not None:
                     if self.kick_events.publish_event(self.mqtt_client, detected['strength']):
                         LOG.debug("KICK MQTT EVENT published topic=reactive_lights/events/kick count=%d",
@@ -119,9 +119,10 @@ class PcmSink:
             self.stats.maybe_log()
             if time.monotonic() - self.last_kick_diagnostic >= 10:
                 self.last_kick_diagnostic = time.monotonic()
-                LOG.debug("KICK DETECTOR HEALTH accepted=%d candidates=%d refractory_rejects=%d threshold_reject_frames=%d sensitivity=%.2f max_strength=%.3f mqtt_published_total=%d",
+                LOG.debug("KICK DETECTOR HEALTH accepted=%d candidates=%d refractory_rejects=%d decay_rejects=%d subbass_rejects=%d threshold_reject_frames=%d sensitivity=%.2f max_strength=%.3f mqtt_published_total=%d",
                           self.fast_kick.accepted, self.fast_kick.candidates,
-                          self.fast_kick.rejected_refractory, self.fast_kick.rejected_threshold,
+                          self.fast_kick.rejected_refractory, self.fast_kick.rejected_decay,
+                          self.fast_kick.rejected_subbass, self.fast_kick.rejected_threshold,
                           self.fast_kick.sensitivity, self.fast_kick.max_strength,
                           self.kick_events.event_count)
             if time.monotonic() - self.last_debug > 10:
